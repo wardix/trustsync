@@ -238,6 +238,24 @@ if __name__ == '__main__':
             block_domain[domain] = True
             fp.write(rr.replace('{name}', domain))
 
+    for cache in cache_uptodate:
+        fpc = open(cache)
+        for l in fpc:
+            domain = l.strip()
+            if domain.endswith('.'):
+                domain = domain[:-1]
+            if not isvalid_fqdn(domain):
+                if not quiet:
+                    print 'invalid domain %s' % (domain)
+            else:
+                if domain in whitelist_domain:
+                    continue
+                if domain in block_domain:
+                    continue
+                block_domain[domain] = True
+                fp.write(rr.replace('{name}', domain))
+        fpc.close()
+
     if blacklist_domain_file:
         for domain_file in blacklist_domain_file:
             fpd = open(domain_file)
