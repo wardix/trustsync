@@ -252,3 +252,6 @@ if __name__ == '__main__':
             fpd.close()
 
     fp.close()
+
+    if post_exec:
+        os.system(post_exec)
