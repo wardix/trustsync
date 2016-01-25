@@ -1,0 +1,254 @@
+#!/usr/bin/env python
+
+import urllib2
+import sys
+import time
+import calendar
+import shlex
+import argparse
+import os
+import re
+
+def read_config(config):
+    ret = []
+    try:
+        fp = open(config)
+    except IOError:
+        return ret
+    try:
+        for l in fp:
+            ret += shlex.split(l, comments=True)
+    finally:
+        fp.close()
+    return ret
+
+def isvalid_fqdn(dn):
+    if len(dn) > 253:
+        return False
+    if re.match('[0-9.]+$', dn):
+        return False
+    allowed = re.compile('(?!-)[a-z0-9-]{1,63}(?<!-)$', re.IGNORECASE)
+    return all(allowed.match(x) for x in dn.split('.'))
+
+if __name__ == '__main__':
+    # default option value
+    cache_dir = '/tmp'
+    blacklist_domain_file = None
+    whitelist_domain_file = None
+    cache_urlblock_map = None
+    header_zone_template = None
+    rr_template = None
+    out_zone = None
+    post_exec = None
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', default='/etc/trustsync/trustsync.conf')
+    parser.add_argument('--cache-dir')
+    parser.add_argument('--blacklist-domain-file', action='append')
+    parser.add_argument('--whitelist-domain-file', action='append')
+    parser.add_argument('--cache-urlblock-map', action='append')
+    parser.add_argument('--force-download', action='store_true')
+    parser.add_argument('--force-generate', action='store_true')
+    parser.add_argument('--quiet', action='store_true')
+    parser.add_argument('--header-zone-template')
+    parser.add_argument('--rr-template')
+    parser.add_argument('--out-zone')
+    parser.add_argument('--post-exec')
+    cmd_args = parser.parse_args()
+
+    cfg = read_config(cmd_args.config)
+    cfg_args, ignore = parser.parse_known_args(cfg)
+
+    if cmd_args.cache_dir:
+        cache_dir = cmd_args.cache_dir
+    elif cfg_args.cache_dir:
+        cache_dir = cfg_args.cache_dir
+
+    if cmd_args.blacklist_domain_file:
+        blacklist_domain_file = cmd_args.blacklist_domain_file
+    elif cfg_args.blacklist_domain_file:
+        blacklist_domain_file = cfg_args.blacklist_domain_file
+
+    if cmd_args.whitelist_domain_file:
+        whitelist_domain_file = cmd_args.whitelist_domain_file
+    elif cfg_args.whitelist_domain_file:
+        whitelist_domain_file = cfg_args.whitelist_domain_file
+
+    if cmd_args.cache_urlblock_map:
+        cache_urlblock_map = cmd_args.cache_urlblock_map
+    elif cfg_args.cache_urlblock_map:
+        cache_urlblock_map = cfg_args.cache_urlblock_map
+
+    force_download = cmd_args.force_download or cfg_args.force_download
+    force_generate = cmd_args.force_generate or cfg_args.force_generate
+    quiet = cmd_args.quiet or cfg_args.quiet
+
+    if cmd_args.header_zone_template:
+        header_zone_template = cmd_args.header_zone_template
+    elif cfg_args.header_zone_template:
+        header_zone_template = cfg_args.header_zone_template
+
+    if cmd_args.rr_template:
+        rr_template = cmd_args.rr_template
+    elif cfg_args.rr_template:
+        rr_template = cfg_args.rr_template
+
+    if cmd_args.out_zone:
+        out_zone = cmd_args.out_zone
+    elif cfg_args.out_zone:
+        out_zone = cfg_args.out_zone
+
+    if cmd_args.post_exec:
+        post_exec = cmd_args.post_exec
+    elif cfg_args.post_exec:
+        post_exec = cfg_args.post_exec
+
+    if (not blacklist_domain_file and
+        not whitelist_domain_file and
+        not cache_urlblock_map):
+        if not quiet:
+            print "no such input"
+        sys.exit()
+
+    if not out_zone:
+        if not quiet:
+            print "--out-zone must be specified"
+        sys.exit()
+
+    if not header_zone_template:
+        if not quiet:
+            print "--header-zone-template must be specified"
+        sys.exit()
+
+    if not rr_template:
+        if not quiet:
+            print "--rr-template must be specified"
+        sys.exit()
+
+    whitelist_domain = {}
+    if whitelist_domain_file:
+        for domain_file in whitelist_domain_file:
+            fp = open(domain_file)
+            for l in fp:
+                domain = l.strip()
+                whitelist_domain[domain] = True
+            fp.close()
+
+    generate = force_generate
+    domains = []
+    if cache_urlblock_map:
+        cache_uptodate = []
+        chunk_size = 8192
+        for cache_url in cache_urlblock_map:
+            cache, url = cache_url.split(':', 1)
+            cache = cache_dir + '/' + cache
+            resp = urllib2.urlopen(url)
+            download = force_download
+            umtime = resp.info().getheader('Last-Modified')
+            t = time.strptime(umtime, '%a, %d %b %Y %H:%M:%S GMT')
+            umtime = calendar.timegm(t)
+            if not download:
+                cmtime = 0
+                try:
+                    cmtime = os.path.getmtime(cache)
+                except:
+                    pass
+                download = (umtime > cmtime)
+
+            if download:
+                generate = True
+                size = resp.info().getheader('Content-Length')
+                if size:
+                    size = int(size)
+                if not quiet:
+                    print "downloading %s" % (url)
+
+                downloaded = 0
+                progress = 0
+                fp = open(cache, 'w')
+                domain_partial = ''
+                # download chunk by chunk
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        if not quiet:
+                            sys.stdout.write('\n')
+                            sys.stdout.flush()
+                        break
+                    downloaded += len(chunk)
+                    domains_chunk = chunk.split('\n')
+                    domains_chunk[0] = domain_partial + domains_chunk[0]
+                    domain_partial = domains_chunk.pop()
+                    domains += domains_chunk
+                    if not quiet:
+                        if not size:
+                            sys.stdout.write('.')
+                            sys.stdout.flush()
+                        else:
+                            percent = downloaded * 100 / size
+                            progress_buff = percent - progress
+                            if progress_buff >= 2:
+                                progress_dot = progress_buff / 2
+                                for i in range(progress_dot):
+                                    sys.stdout.write('.')
+                                    sys.stdout.flush()
+                                    progress += 2
+                                    if (progress % 10) == 0:
+                                        sys.stdout.write(' ')
+                                        sys.stdout.flush()
+
+                    fp.write(chunk)
+                if domain_partial:
+                    domains.append(domain_partial)
+                fp.close()
+                # update modified time of cache file
+                os.utime(cache, (umtime, umtime))
+            else:
+                cache_uptodate.append(cache)
+
+    if not generate:
+        sys.exit()
+
+    fp = open(header_zone_template)
+    header_zone = fp.read()
+    fp.close()
+
+    fp = open(rr_template)
+    rr = fp.read()
+    fp.close()
+
+    serial = time.strftime('%Y%m%d01')
+    fp = open(out_zone, 'w')
+    fp.write(header_zone.replace('{serial}', serial))
+
+    block_domain = {}
+    for domain in domains:
+        # validate domain and write to out zone
+        domain = domain.strip()
+        if domain.endswith('.'):
+            domain = domain[:-1]
+        if not isvalid_fqdn(domain):
+            if not quiet:
+                print 'invalid domain %s' % (domain)
+        else:
+            if domain in whitelist_domain:
+                continue
+            if domain in block_domain:
+                continue
+            block_domain[domain] = True
+            fp.write(rr.replace('{name}', domain))
+
+    if blacklist_domain_file:
+        for domain_file in blacklist_domain_file:
+            fpd = open(domain_file)
+            for l in fpd:
+                domain = l.strip()
+                if domain in whitelist_domain:
+                    continue
+                if domain in block_domain:
+                    continue
+                block_domain[domain] = True
+                fp.write(rr.replace('{name}', domain))
+            fpd.close()
+
+    fp.close()
