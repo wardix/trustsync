@@ -1,0 +1,9 @@
+$TTL 30
+@ IN SOA ns3.nusa.net.id. helpdesk.nusa.net.id. (
+    {serial}
+    7200
+    1800
+    1209600
+    86400 )
+ IN NS ns3.nusa.net.id.
+ IN NS ns4.nusa.net.id.
