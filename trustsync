@@ -130,6 +130,8 @@ if __name__ == '__main__':
         for domain_file in whitelist_domain_file:
             fp = open(domain_file)
             for l in fp:
+                if l.startswith('#'):
+                    continue
                 domain = l.strip()
                 whitelist_domain[domain] = True
             fp.close()
@@ -261,6 +263,8 @@ if __name__ == '__main__':
             fpd = open(domain_file)
             for l in fpd:
                 domain = l.strip()
+                if domain.startswith('#'):
+                    continue
                 if domain in whitelist_domain:
                     continue
                 if domain in block_domain:
