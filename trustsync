@@ -172,40 +172,46 @@ if __name__ == '__main__':
                 while True:
                     chunk = resp.read(chunk_size)
                     if not chunk:
-                        if not quiet:
-                            sys.stdout.write('\n')
-                            sys.stdout.flush()
+                        if quiet:
+                            break
+                        sys.stdout.write('\n')
+                        sys.stdout.flush()
                         break
                     downloaded += len(chunk)
                     domains_chunk = chunk.split('\n')
                     domains_chunk[0] = domain_partial + domains_chunk[0]
                     domain_partial = domains_chunk.pop()
                     domains += domains_chunk
-                    if not quiet:
-                        if not size:
+                    fp.write(chunk)
+                    if quiet:
+                        continue
+
+                    # verbose
+                    if not size:
+                        sys.stdout.write('.')
+                        sys.stdout.flush()
+                        continue
+
+                    # verbose with percent, one dot for 2% of total size
+                    percent = downloaded * 100 / size
+                    progress_buff = percent - progress
+                    if progress_buff >= 2:
+                        progress_dot = progress_buff / 2
+                        for i in range(progress_dot):
                             sys.stdout.write('.')
                             sys.stdout.flush()
-                        else:
-                            percent = downloaded * 100 / size
-                            progress_buff = percent - progress
-                            if progress_buff >= 2:
-                                progress_dot = progress_buff / 2
-                                for i in range(progress_dot):
-                                    sys.stdout.write('.')
-                                    sys.stdout.flush()
-                                    progress += 2
-                                    if (progress % 10) == 0:
-                                        sys.stdout.write(' ')
-                                        sys.stdout.flush()
+                            progress += 2
+                            if (progress % 10) == 0:
+                                sys.stdout.write(' ')
+                                sys.stdout.flush()
 
-                    fp.write(chunk)
                 if domain_partial:
                     domains.append(domain_partial)
                 fp.close()
                 # update modified time of cache file
                 os.utime(cache, (umtime, umtime))
-            else:
-                cache_uptodate.append(cache)
+                continue
+            cache_uptodate.append(cache)
 
     if not generate:
         sys.exit()
@@ -229,15 +235,16 @@ if __name__ == '__main__':
         if domain.endswith('.'):
             domain = domain[:-1]
         if not isvalid_fqdn(domain):
-            if not quiet:
-                print 'invalid domain %s' % (domain)
-        else:
-            if domain in whitelist_domain:
+            if quiet:
                 continue
-            if domain in block_domain:
-                continue
-            block_domain[domain] = True
-            fp.write(rr.replace('{name}', domain))
+            print 'invalid domain %s' % (domain)
+            continue
+        if domain in whitelist_domain:
+            continue
+        if domain in block_domain:
+            continue
+        block_domain[domain] = True
+        fp.write(rr.replace('{name}', domain))
 
     for cache in cache_uptodate:
         fpc = open(cache)
@@ -246,15 +253,16 @@ if __name__ == '__main__':
             if domain.endswith('.'):
                 domain = domain[:-1]
             if not isvalid_fqdn(domain):
-                if not quiet:
-                    print 'invalid domain %s' % (domain)
-            else:
-                if domain in whitelist_domain:
+                if quiet:
                     continue
-                if domain in block_domain:
-                    continue
-                block_domain[domain] = True
-                fp.write(rr.replace('{name}', domain))
+                print 'invalid domain %s' % (domain)
+                continue
+            if domain in whitelist_domain:
+                continue
+            if domain in block_domain:
+                continue
+            block_domain[domain] = True
+            fp.write(rr.replace('{name}', domain))
         fpc.close()
 
     if blacklist_domain_file:
