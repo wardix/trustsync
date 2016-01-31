@@ -33,8 +33,8 @@ def isvalid_fqdn(dn):
 if __name__ == '__main__':
     # default option value
     cache_dir = '/tmp'
-    blacklist_domain_file = None
-    whitelist_domain_file = None
+    blacklist_domain_file = []
+    whitelist_domain_file = []
     cache_urlblock_map = None
     header_zone_template = None
     rr_template = None
@@ -125,17 +125,6 @@ if __name__ == '__main__':
             print "--rr-template must be specified"
         sys.exit()
 
-    whitelist_domain = {}
-    if whitelist_domain_file:
-        for domain_file in whitelist_domain_file:
-            fp = open(domain_file)
-            for l in fp:
-                if l.startswith('#'):
-                    continue
-                domain = l.strip()
-                whitelist_domain[domain] = True
-            fp.close()
-
     generate = force_generate
     domains = []
     if cache_urlblock_map:
@@ -213,8 +202,36 @@ if __name__ == '__main__':
                 continue
             cache_uptodate.append(cache)
 
+    # compare out zone file modified time with template file modified time
+    if not generate:
+        try:
+            omtime = os.path.getmtime(out_zone)
+            hmtime = os.path.getmtime(header_zone_template)
+            rmtime = os.path.getmtime(rr_template)
+            generate = (hmtime > omtime) or (rmtime > omtime)
+        except:
+            generate = True
+
+    # compare out zone file modified time with whitelist/blacklist file
+    if not generate:
+        for domain_file in (whitelist_domain_file + blacklist_domain_file)
+            dmtime = os.path.getmtime(domain_file)
+            if dmtime > omtime:
+                generate = True
+                break
+
     if not generate:
         sys.exit()
+
+    whitelist_domain = {}
+    for domain_file in whitelist_domain_file:
+        fp = open(domain_file)
+        for l in fp:
+            if l.startswith('#'):
+                continue
+            domain = l.strip()
+            whitelist_domain[domain] = True
+        fp.close()
 
     fp = open(header_zone_template)
     header_zone = fp.read()
@@ -265,20 +282,19 @@ if __name__ == '__main__':
             fp.write(rr.replace('{name}', domain))
         fpc.close()
 
-    if blacklist_domain_file:
-        for domain_file in blacklist_domain_file:
-            fpd = open(domain_file)
-            for l in fpd:
-                domain = l.strip()
-                if domain.startswith('#'):
-                    continue
-                if domain in whitelist_domain:
-                    continue
-                if domain in block_domain:
-                    continue
-                block_domain[domain] = True
-                fp.write(rr.replace('{name}', domain))
-            fpd.close()
+    for domain_file in blacklist_domain_file:
+        fpd = open(domain_file)
+        for l in fpd:
+            domain = l.strip()
+            if domain.startswith('#'):
+                continue
+            if domain in whitelist_domain:
+                continue
+            if domain in block_domain:
+                continue
+            block_domain[domain] = True
+            fp.write(rr.replace('{name}', domain))
+        fpd.close()
 
     fp.close()
 
