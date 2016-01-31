@@ -150,12 +150,11 @@ if __name__ == '__main__':
             t = time.strptime(umtime, '%a, %d %b %Y %H:%M:%S GMT')
             umtime = calendar.timegm(t)
             if not download:
-                cmtime = 0
                 try:
                     cmtime = os.path.getmtime(cache)
+                    download = (umtime > cmtime)
                 except:
-                    pass
-                download = (umtime > cmtime)
+                    download = True
 
             if download:
                 generate = True
