@@ -214,7 +214,7 @@ if __name__ == '__main__':
 
     # compare out zone file modified time with whitelist/blacklist file
     if not generate:
-        for domain_file in (whitelist_domain_file + blacklist_domain_file)
+        for domain_file in (whitelist_domain_file + blacklist_domain_file):
             dmtime = os.path.getmtime(domain_file)
             if dmtime > omtime:
                 generate = True
