@@ -23,12 +23,16 @@ def read_config(config):
     return ret
 
 def isvalid_fqdn(dn):
-    if len(dn) > 253:
+    if len(dn) > 255:
         return False
     if re.match('[0-9.]+$', dn):
         return False
+    if dn.startswith('*.'):
+        xdn = dn[2:]
+    else:
+        xdn = dn
     allowed = re.compile('(?!-)[a-z0-9-]{1,63}(?<!-)$', re.IGNORECASE)
-    return all(allowed.match(x) for x in dn.split('.'))
+    return all(allowed.match(x) for x in xdn.split('.'))
 
 if __name__ == '__main__':
     # default option value
