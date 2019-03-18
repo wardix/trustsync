@@ -8,6 +8,7 @@ import shlex
 import argparse
 import os
 import re
+import ssl
 
 def read_config(config):
     ret = []
@@ -130,10 +131,11 @@ if __name__ == '__main__':
     if cache_urlblock_map:
         cache_uptodate = []
         chunk_size = 8192
+        context = ssl._create_unverified_context()
         for cache_url in cache_urlblock_map:
             cache, url = cache_url.split(':', 1)
             cache = cache_dir + '/' + cache
-            resp = urllib2.urlopen(url)
+            resp = urllib2.urlopen(url, context=context)
             download = force_download
             umtime = resp.info().getheader('Last-Modified')
             t = time.strptime(umtime, '%a, %d %b %Y %H:%M:%S GMT')
