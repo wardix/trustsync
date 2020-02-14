@@ -48,8 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--blacklist-domain-file', action='append')
     parser.add_argument('--whitelist-domain-file', action='append')
     parser.add_argument('--cache-urlblock-map', action='append')
-    parser.add_argument('--force-download', action='store_true')
-    parser.add_argument('--force-generate', action='store_true')
+    parser.add_argument('--no-download', action='store_true')
     parser.add_argument('--quiet', action='store_true')
     parser.add_argument('--header-zone-template')
     parser.add_argument('--rr-template')
@@ -80,8 +79,7 @@ if __name__ == '__main__':
     elif cfg_args.cache_urlblock_map:
         cache_urlblock_map = cfg_args.cache_urlblock_map
 
-    force_download = cmd_args.force_download or cfg_args.force_download
-    force_generate = cmd_args.force_generate or cfg_args.force_generate
+    no_download = cmd_args.no_download or cfg_args.no_download
     quiet = cmd_args.quiet or cfg_args.quiet
 
     if cmd_args.header_zone_template:
@@ -126,7 +124,6 @@ if __name__ == '__main__':
             print "--rr-template must be specified"
         sys.exit()
 
-    generate = force_generate
     domains = []
     if cache_urlblock_map:
         cache_uptodate = []
@@ -135,23 +132,8 @@ if __name__ == '__main__':
         for cache_url in cache_urlblock_map:
             cache, url = cache_url.split(':', 1)
             cache = cache_dir + '/' + cache
-            resp = urllib2.urlopen(url, context=context)
-            download = force_download
-            umtime = resp.info().getheader('Last-Modified')
-            t = time.strptime(umtime, '%a, %d %b %Y %H:%M:%S GMT')
-            umtime = calendar.timegm(t)
-            if not download:
-                try:
-                    cmtime = os.path.getmtime(cache)
-                    download = (umtime > cmtime)
-                except:
-                    download = True
-
-            if download:
-                generate = True
-                size = resp.info().getheader('Content-Length')
-                if size:
-                    size = int(size)
+            if not no_download:
+                resp = urllib2.urlopen(url, context=context)
                 if not quiet:
                     print "downloading %s" % (url)
 
@@ -159,6 +141,7 @@ if __name__ == '__main__':
                 progress = 0
                 fp = open(cache, 'w')
                 domain_partial = ''
+                dot_printed = 0
                 # download chunk by chunk
                 while True:
                     chunk = resp.read(chunk_size)
@@ -177,53 +160,22 @@ if __name__ == '__main__':
                     if quiet:
                         continue
 
-                    # verbose
-                    if not size:
-                        sys.stdout.write('.')
-                        sys.stdout.flush()
-                        continue
-
-                    # verbose with percent, one dot for 2% of total size
-                    percent = downloaded * 100 / size
-                    progress_buff = percent - progress
-                    if progress_buff >= 2:
-                        progress_dot = progress_buff / 2
+                    progress_buff = downloaded - progress
+                    if progress_buff >= 1048576:
+                        progress_dot = progress_buff / 1048576
                         for i in range(progress_dot):
                             sys.stdout.write('.')
                             sys.stdout.flush()
-                            progress += 2
-                            if (progress % 10) == 0:
+                            progress += 1048576
+                            dot_printed += 1
+                            if (dot_printed % 5) == 0:
                                 sys.stdout.write(' ')
                                 sys.stdout.flush()
-
                 if domain_partial:
                     domains.append(domain_partial)
                 fp.close()
-                # update modified time of cache file
-                os.utime(cache, (umtime, umtime))
                 continue
             cache_uptodate.append(cache)
-
-    # compare out zone file modified time with template file modified time
-    if not generate:
-        try:
-            omtime = os.path.getmtime(out_zone)
-            hmtime = os.path.getmtime(header_zone_template)
-            rmtime = os.path.getmtime(rr_template)
-            generate = (hmtime > omtime) or (rmtime > omtime)
-        except:
-            generate = True
-
-    # compare out zone file modified time with whitelist/blacklist file
-    if not generate:
-        for domain_file in (whitelist_domain_file + blacklist_domain_file):
-            dmtime = os.path.getmtime(domain_file)
-            if dmtime > omtime:
-                generate = True
-                break
-
-    if not generate:
-        sys.exit()
 
     whitelist_domain = {}
     for domain_file in whitelist_domain_file:
