@@ -1,9 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import urllib2
+import urllib.request
 import sys
 import time
-import calendar
 import shlex
 import argparse
 import os
@@ -13,14 +12,11 @@ import ssl
 def read_config(config):
     ret = []
     try:
-        fp = open(config)
+        with open(config) as fp:
+            for l in fp:
+                ret += shlex.split(l, comments=True)
     except IOError:
-        return ret
-    try:
-        for l in fp:
-            ret += shlex.split(l, comments=True)
-    finally:
-        fp.close()
+        pass
     return ret
 
 def isvalid_fqdn(dn):
@@ -30,6 +26,56 @@ def isvalid_fqdn(dn):
         return False
     allowed = re.compile('(?!-)[a-z0-9-]{1,63}(?<!-)$', re.IGNORECASE)
     return all(allowed.match(x) for x in dn.split('.'))
+
+def insecure_progressive_download_domains_url(
+        url,
+        output_file,
+        quiet=False,
+        chunk_size=8192,
+        progress_size=1048576,
+        progress_group_size=5):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    domains = []
+    if not quiet:
+        print('downloading', url)
+    with urllib.request.urlopen(url, context=ctx) as resp:
+        with open(output_file, 'wb') as fp:
+            downloaded = 0
+            progress = 0
+            dot_printed = 0
+            domain_partial = ''
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    if not quiet:
+                        sys.stdout.write('\n')
+                        sys.stdout.flush()
+                    break
+                downloaded += len(chunk)
+                domains_chunk = chunk.decode('utf-8').split('\n')
+                domains_chunk[0] = domain_partial + domains_chunk[0]
+                domain_partial = domains_chunk.pop()
+                domains += domains_chunk
+                fp.write(chunk)
+                if quiet:
+                    continue
+
+                progress_buff = downloaded - progress
+                if progress_buff >= progress_size:
+                    progress_dot = int(progress_buff / progress_size)
+                    for i in range(progress_dot):
+                        sys.stdout.write('.')
+                        sys.stdout.flush()
+                        progress += progress_size
+                        dot_printed += 1
+                        if (dot_printed % progress_group_size) == 0:
+                            sys.stdout.write(' ')
+                            sys.stdout.flush()
+            if domain_partial:
+                domains.append(domain_partial)
+    return domains
 
 if __name__ == '__main__':
     # default option value
@@ -106,129 +152,68 @@ if __name__ == '__main__':
         not whitelist_domain_file and
         not cache_urlblock_map):
         if not quiet:
-            print "no such input"
-        sys.exit()
+            print("no such input")
+        quit()
 
     if not out_zone:
         if not quiet:
-            print "--out-zone must be specified"
-        sys.exit()
+            print("--out-zone must be specified")
+        quit()
 
     if not header_zone_template:
         if not quiet:
-            print "--header-zone-template must be specified"
-        sys.exit()
+            print("--header-zone-template must be specified")
+        quit()
 
     if not rr_template:
         if not quiet:
-            print "--rr-template must be specified"
-        sys.exit()
+            print("--rr-template must be specified")
+        quit()
 
     domains = []
+    cache_uptodate = []
     if cache_urlblock_map:
-        cache_uptodate = []
-        chunk_size = 8192
-        context = ssl._create_unverified_context()
         for cache_url in cache_urlblock_map:
             cache, url = cache_url.split(':', 1)
             cache = cache_dir + '/' + cache
             if not no_download:
-                resp = urllib2.urlopen(url, context=context)
-                if not quiet:
-                    print "downloading %s" % (url)
-
-                downloaded = 0
-                progress = 0
-                fp = open(cache, 'w')
-                domain_partial = ''
-                dot_printed = 0
-                # download chunk by chunk
-                while True:
-                    chunk = resp.read(chunk_size)
-                    if not chunk:
-                        if quiet:
-                            break
-                        sys.stdout.write('\n')
-                        sys.stdout.flush()
-                        break
-                    downloaded += len(chunk)
-                    domains_chunk = chunk.split('\n')
-                    domains_chunk[0] = domain_partial + domains_chunk[0]
-                    domain_partial = domains_chunk.pop()
-                    domains += domains_chunk
-                    fp.write(chunk)
-                    if quiet:
-                        continue
-
-                    progress_buff = downloaded - progress
-                    if progress_buff >= 1048576:
-                        progress_dot = progress_buff / 1048576
-                        for i in range(progress_dot):
-                            sys.stdout.write('.')
-                            sys.stdout.flush()
-                            progress += 1048576
-                            dot_printed += 1
-                            if (dot_printed % 5) == 0:
-                                sys.stdout.write(' ')
-                                sys.stdout.flush()
-                if domain_partial:
-                    domains.append(domain_partial)
-                fp.close()
-                continue
+                domains.extend(
+                    insecure_progressive_download_domains_url(
+                        url,
+                        cache))
             cache_uptodate.append(cache)
 
     whitelist_domain = {}
     for domain_file in whitelist_domain_file:
-        fp = open(domain_file)
-        for l in fp:
-            if l.startswith('#'):
-                continue
-            domain = l.strip()
-            whitelist_domain[domain] = True
-        fp.close()
+        with open(domain_file) as fp:
+            for l in fp:
+                if l.startswith('#'):
+                    continue
+                domain = l.strip()
+                whitelist_domain[domain] = True
 
-    fp = open(header_zone_template)
-    header_zone = fp.read()
-    fp.close()
+    with open(header_zone_template) as fp:
+        header_zone = fp.read()
 
-    fp = open(rr_template)
-    rr = fp.read()
-    fp.close()
+    with open(rr_template) as fp:
+        rr = fp.read()
 
     serial = time.strftime('%Y%m%d01')
-    fp = open(out_zone, 'w')
-    fp.write(header_zone.replace('{serial}', serial))
 
-    block_domain = {}
-    for domain in domains:
-        # validate domain and write to out zone
-        domain = domain.strip()
-        if domain.startswith('*.'):
-            domain = domain[2:]
-        if domain.endswith('.'):
-            domain = domain[:-1]
-        if not isvalid_fqdn(domain):
-            if quiet:
-                continue
-            print 'invalid domain %s' % (domain)
-            continue
-        if domain in whitelist_domain:
-            continue
-        if domain in block_domain:
-            continue
-        block_domain[domain] = True
-        fp.write(rr.replace('{name}', domain))
+    with open(out_zone, 'w') as fp:
+        fp.write(header_zone.replace('{serial}', serial))
 
-    for cache in cache_uptodate:
-        fpc = open(cache)
-        for l in fpc:
-            domain = l.strip()
+        block_domain = {}
+        for domain in domains:
+            # validate domain and write to out zone
+            domain = domain.strip()
+            if domain.startswith('*.'):
+                domain = domain[2:]
             if domain.endswith('.'):
                 domain = domain[:-1]
             if not isvalid_fqdn(domain):
-                if quiet:
-                    continue
-                print 'invalid domain %s' % (domain)
+                if not quiet:
+                    print('invalid domain', domain)
                 continue
             if domain in whitelist_domain:
                 continue
@@ -236,23 +221,37 @@ if __name__ == '__main__':
                 continue
             block_domain[domain] = True
             fp.write(rr.replace('{name}', domain))
-        fpc.close()
 
-    for domain_file in blacklist_domain_file:
-        fpd = open(domain_file)
-        for l in fpd:
-            domain = l.strip()
-            if domain.startswith('#'):
-                continue
-            if domain in whitelist_domain:
-                continue
-            if domain in block_domain:
-                continue
-            block_domain[domain] = True
-            fp.write(rr.replace('{name}', domain))
-        fpd.close()
+        for cache in cache_uptodate:
+            with open(cache) as fpc:
+                for l in fpc:
+                    domain = l.strip()
+                    if domain.endswith('.'):
+                        domain = domain[:-1]
+                    if not isvalid_fqdn(domain):
+                        if quiet:
+                            continue
+                        print('invalid domain', domain)
+                        continue
+                    if domain in whitelist_domain:
+                        continue
+                    if domain in block_domain:
+                        continue
+                    block_domain[domain] = True
+                    fp.write(rr.replace('{name}', domain))
 
-    fp.close()
+        for domain_file in blacklist_domain_file:
+            with open(domain_file) as fpd:
+                for l in fpd:
+                    domain = l.strip()
+                    if domain.startswith('#'):
+                        continue
+                    if domain in whitelist_domain:
+                        continue
+                    if domain in block_domain:
+                        continue
+                    block_domain[domain] = True
+                    fp.write(rr.replace('{name}', domain))
 
     if post_exec:
         os.system(post_exec)
